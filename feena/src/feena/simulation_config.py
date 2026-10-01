@@ -52,7 +52,8 @@ class BrowserAssertion(StrictModel):
     kind: Literal["visible", "text", "count", "json"]
     target: str = Field(min_length=1)
     expected: Any = True
-    status_code: int = Field(default=200, ge=200, lt=300)
+    # Assertions inspect a final response, including expected denials and errors.
+    status_code: int = Field(default=200, ge=200, lt=600)
 
     @model_validator(mode="after")
     def validate_assertion(self):

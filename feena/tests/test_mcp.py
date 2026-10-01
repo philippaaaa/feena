@@ -113,3 +113,54 @@ def test_public_endpoint_is_operator_configured(tmp_path, monkeypatch):
     runs = manager(tmp_path)
     with TestClient(http_app(create_server(runs, ["testserver"]), runs, "x" * 40)) as client:
         assert client.get("/connection-info").json() == {"endpoint": "https://qa.example.com/mcp"}
+
+
+def test_campaign_mcp_and_legacy_run_share_durable_queue(tmp_path, monkeypatch):
+    import json
+
+    from feena.campaigns import Campaigns
+    from feena.mcp_server import CampaignRuns
+
+    campaigns = Campaigns(Path("examples/resilient-checkout/feena.yaml"),
+                          ["http://127.0.0.1:5056"], tmp_path)
+    # No browser is needed to verify routing, persistence, and cancellation through MCP.
+    async def resume():
+        pass
+    monkeypatch.setattr(campaigns, "resume", resume)
+    runs = CampaignRuns(campaigns)
+    app = http_app(create_server(runs, ["testserver"], campaigns), runs, "x" * 40)
+    headers = {"Authorization": "Bearer " + "x" * 40,
+               "Accept": "application/json, text/event-stream"}
+    with TestClient(app) as client:
+        def call(name, arguments):
+            response = client.post("/mcp", headers=headers, json={
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}})
+            result = response.json()["result"]
+            assert not result.get("isError"), result
+            return json.loads(result["content"][0]["text"])
+
+        campaign = call("start_campaign", {"scenarios": ["retry-checkout"]})
+        campaign_id = campaign["campaign_id"]
+        assert call("get_campaign", {"campaign_id": campaign_id})["campaign_id"] == campaign_id
+        legacy = call("start_run", {"scenario": "offline-recovery"})
+        assert legacy["run_id"] == legacy["campaign_id"]
+        assert call("get_run", {"run_id": legacy["run_id"]})["campaign_id"] == legacy["run_id"]
+        assert call("cancel_campaign", {"campaign_id": campaign_id})["status"] == "cancelled"
+        assert call("cancel_run", {"run_id": legacy["run_id"]})["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("outcome,expected", [
+    ("passed", "completed"), ("failed", "completed"),
+    ("inconclusive", "completed"), ("timed_out", "timed_out"), ("error", "error"),
+])
+def test_legacy_campaign_adapter_preserves_execution_status(outcome, expected):
+    from feena.mcp_server import CampaignRuns
+
+    campaign_status = "inconclusive" if outcome in {"inconclusive", "timed_out", "error"} else (
+        "failed" if outcome == "failed" else "completed")
+    result = CampaignRuns._run({"campaign_id": "sample", "status": campaign_status, "jobs": [
+        {"scenario": "checkout", "profile": "normal", "status": outcome, "reason": None}]})
+    assert result["status"] == expected
+    assert result["scenario"] == "checkout"
+    assert result["results"][0]["status"] == outcome

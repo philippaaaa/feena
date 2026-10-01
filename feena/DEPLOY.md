@@ -16,7 +16,7 @@ accounts. Use it only with a trusted team.
 
 The repository includes a Dockerfile for a Linux container host. This is deployment preparation,
 not a claim that a production service has been provisioned. The container build needs internet
-access for Python dependencies and Chromium. Use one replica: job state is process-local.
+access for Python dependencies and Chromium. Use one Linux service replica per campaign store; an exclusive lock rejects a second owner.
 
 Configure these secrets/settings at your hosting provider:
 
@@ -44,8 +44,9 @@ automatic journey generation, self-service customer accounts, and OAuth are not 
 Mount private persistent storage at `/data` writable by the `feena` container user, and set
 CPU/memory limits and a retention policy. Browser traces can contain sensitive data. Give the
 container only network access to its test environment. Do not mount a Docker socket or provider
-credentials. Current limits: one active run, 120 seconds per run, 100 runs per process lifetime.
-Restarting loses job status; it does not delete evidence. This is a pilot, not unattended
+credentials. Campaign state and scenario snapshots persist in SQLite under the output directory.
+Limits: 1–16 worker slots, 120 seconds per browser job, 100 jobs per campaign, and 1,000
+jobs per store. Archive the complete store and use a new output directory when full. This is a pilot, not unattended
 multi-tenant production infrastructure.
 
 ## Before inviting users
@@ -57,3 +58,61 @@ multi-tenant production infrastructure.
 - Rotate the workspace key by changing the secret and restarting if a key or install link leaks.
 
 Cursor's install-link format: https://cursor.com/docs/mcp/install-links
+
+
+## Parallel campaigns
+
+The MCP service now exposes `start_campaign(scenarios)`, `get_campaign(campaign_id)`, and
+`cancel_campaign(campaign_id)`. Existing `start_run`, `get_run`, and `cancel_run` calls use
+the same durable queue. Every configured scenario/profile pair becomes one browser job.
+Campaigns execute configured journeys; autonomous discovery and hostile-agent scheduling
+are not included in this release.
+
+Provision independent disposable copies of your app and database, then repeat `--target`
+once per worker slot (up to 16). Different URLs must not be aliases for the same backend:
+Feena cannot detect shared databases. Each slot executes only one job at a time across all
+campaigns. Provide a private same-origin POST reset endpoint using `--reset-path` if tests
+do not isolate their own data. The reset endpoint must finish resetting and seeding data
+before returning 2xx; redirects or failures prevent the browser job from running.
+Reset hooks are operator configuration, never supplied through MCP.
+
+```bash
+feena-mcp --transport http --config /config/feena.yaml --out /data/campaigns \
+  --target http://test-app-1:5055 --target http://test-app-2:5055 \
+  --reset-path /test/reset
+```
+
+The example reset route must be implemented by your test app; the bundled checkout fixture
+instead isolates order data with a fresh browser-session cookie. Do not expose reset routes
+on a production app. The server still needs the HTTPS/token settings above.
+
+Call `start_campaign` with, for example:
+
+```json
+{"scenarios": ["retry-checkout", "broken-idempotency", "offline-recovery"]}
+```
+
+Poll `get_campaign` using the returned ID. It reports per-job IDs, scenario/profile names,
+status, and sanitized execution reasons. A campaign is `completed` only when all assertions
+pass; `failed` means at least one definite assertion failure, and `inconclusive` means an
+execution error, timeout, or interrupted job requires investigation. `queued`, `running`,
+`cancelling`, and `cancelled` describe scheduling state. The legacy run API retains its
+`completed` execution status and exposes individual assertion outcomes in `results`.
+
+Raw worker results, scenario snapshots, traces, screenshots, and manifests remain under
+`<out>/<job-id>/`; keep this directory private. Cancellation stops queued work and kills
+active worker process groups before the slot can be reused. It does not roll back backend
+writes. Configure a reset hook or use journeys that isolate their own data.
+
+### Restart and recovery
+
+Completed results and queued scenario snapshots survive restart. The store is bound to its
+original target list and reset path; a different configuration requires a new store.
+If shutdown interrupted active work, startup fails closed. First stop the previous service
+and all orphan worker/browser processes (recreate its container where applicable), wait for
+outstanding backend work to stop, and reset every target. Then restart once with
+`--recover-interrupted` to acknowledge that cleanup. Interrupted jobs remain inconclusive;
+only queued jobs resume. Remove the flag from normal startup configuration: it is an
+operator acknowledgement, not automatic recovery or a substitute for process cleanup.
+
+This is bounded parallel execution on one host, not multi-tenant or distributed hosting.

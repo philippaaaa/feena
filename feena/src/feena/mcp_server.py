@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import HTMLResponse, JSONResponse
 
+from .campaigns import Campaigns
 from .config import load_config
 from .sandbox import attach
 
@@ -143,9 +144,48 @@ class AccessToken:
         await self.app(scope, receive, send)
 
 
-def create_server(runs: Runs, hosts: list[str]) -> FastMCP:
+class CampaignRuns:
+    """Keep single-journey clients on the same durable queue as campaigns."""
+
+    def __init__(self, campaigns: Campaigns):
+        self.campaigns = campaigns
+
+    def list_scenarios(self) -> list[dict]:
+        return self.campaigns.list_scenarios()
+
+    @staticmethod
+    def _run(campaign: dict) -> dict:
+        status = campaign["status"]
+        if status == "inconclusive":
+            states = {job["status"] for job in campaign["jobs"]}
+            status = "timed_out" if "timed_out" in states else "error" if "error" in states else status
+        return {
+            **campaign, "run_id": campaign["campaign_id"],
+            "scenario": campaign["jobs"][0]["scenario"],
+            "status": ("completed" if status in ("completed", "failed", "inconclusive") else
+                       "running" if status == "queued" else status),
+            "results": [{"scenario": j["scenario"], "profile": j["profile"],
+                         "status": j["status"], "reason": j["reason"] or ""}
+                        for j in campaign["jobs"] if j["status"] not in ("queued", "running")],
+        }
+
+    async def start(self, scenario: str) -> dict:
+        return self._run(await self.campaigns.start([scenario]))
+
+    def get(self, run_id: str) -> dict:
+        return self._run(self.campaigns.get(run_id))
+
+    async def cancel(self, run_id: str) -> dict:
+        return self._run(await self.campaigns.cancel(run_id))
+
+    async def close(self):
+        await self.campaigns.close()
+
+
+def create_server(runs: Runs | CampaignRuns, hosts: list[str],
+                  campaigns: Campaigns | None = None) -> FastMCP:
     server = FastMCP(
-        "Feena UX QA", instructions="List configured journeys, start one, then poll get_run. "
+        "Feena UX QA", instructions="List configured journeys; start one run or a campaign, then poll its status. "
         "Runs mutate disposable test data. A failed journey needs investigation, not an automatic fix.",
         stateless_http=True, json_response=True,
         max_request_body_size=65536,
@@ -164,7 +204,7 @@ def create_server(runs: Runs, hosts: list[str]) -> FastMCP:
         return await runs.start(scenario)
 
     @server.tool()
-    def get_run(run_id: str) -> dict:
+    async def get_run(run_id: str) -> dict:
         """Get execution state and sanitized pass/fail results. Raw evidence stays server-local."""
         return runs.get(run_id)
 
@@ -173,10 +213,26 @@ def create_server(runs: Runs, hosts: list[str]) -> FastMCP:
         """Stop a run and its browser processes. Does not undo application writes."""
         return await runs.cancel(run_id)
 
+    if campaigns is not None:
+        @server.tool()
+        async def start_campaign(scenarios: list[str]) -> dict:
+            """Queue configured journeys and their profiles on disposable worker targets."""
+            return await campaigns.start(scenarios)
+
+        @server.tool()
+        async def get_campaign(campaign_id: str) -> dict:
+            """Get durable campaign progress and sanitized per-profile outcomes."""
+            return campaigns.get(campaign_id)
+
+        @server.tool()
+        async def cancel_campaign(campaign_id: str) -> dict:
+            """Cancel queued and active jobs; application writes are not rolled back."""
+            return await campaigns.cancel(campaign_id)
+
     return server
 
 
-def http_app(server: FastMCP, runs: Runs, token: str):
+def http_app(server: FastMCP, runs: Runs | CampaignRuns, token: str):
     app = server.streamable_http_app()
     original = app.router.lifespan_context
 
@@ -184,6 +240,8 @@ def http_app(server: FastMCP, runs: Runs, token: str):
     async def lifespan(application):
         async with original(application):
             try:
+                if isinstance(runs, CampaignRuns):
+                    await runs.campaigns.resume()
                 yield
             finally:
                 await runs.close()
@@ -195,17 +253,30 @@ def http_app(server: FastMCP, runs: Runs, token: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--target", required=True)
+    parser.add_argument("--target", required=True, action="append",
+                        help="Disposable backend slot; repeat for parallel isolated workers.")
+    parser.add_argument("--reset-path",
+                        help="Optional same-origin POST endpoint to reset each slot before a job.")
+    parser.add_argument("--recover-interrupted", action="store_true",
+                        help="Confirm orphan workers are stopped and all targets reset after interruption.")
     parser.add_argument("--out", type=Path, default=Path(".feena/mcp"))
     parser.add_argument("--transport", choices=["stdio", "http"], default="stdio")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3000)
     args = parser.parse_args()
     hosts = ["localhost:*", "127.0.0.1:*", *filter(None, os.environ.get("FEENA_MCP_HOSTS", "").split(","))]
-    runs = Runs(args.config, args.target, args.out)
-    server = create_server(runs, hosts)
+    campaigns = Campaigns(args.config, args.target, args.out, reset_path=args.reset_path,
+                          recover_interrupted=args.recover_interrupted)
+    runs = CampaignRuns(campaigns)
+    server = create_server(runs, hosts, campaigns)
     if args.transport == "stdio":
-        server.run(transport="stdio")
+        async def serve_stdio():
+            try:
+                await campaigns.resume()
+                await server.run_stdio_async()
+            finally:
+                await campaigns.close()
+        asyncio.run(serve_stdio())
     else:
         import uvicorn
         token = os.environ.get("FEENA_MCP_TOKEN", "")

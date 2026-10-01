@@ -17,8 +17,8 @@ playwright install --with-deps chromium
 pytest -q
 ```
 
-This is a single-workspace prototype, not yet autonomous user simulation or multi-tenant
-production hosting. Hosted installation requires an operator-configured HTTPS service and
+This is a single-workspace prototype with durable, bounded parallel campaigns over configured
+journeys. It is not yet autonomous user simulation or multi-tenant production hosting. Hosted installation requires an operator-configured HTTPS service and
 disposable test environment. Never commit access keys, traces, recordings, or production data.
 
 The bundled vulnerable applications are deliberately insecure local testing fixtures.

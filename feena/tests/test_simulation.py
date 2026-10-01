@@ -7,11 +7,12 @@ import threading
 from pathlib import Path
 
 import pytest
+from flask import Flask, jsonify
 from werkzeug.serving import make_server
 
 from feena.config import load_config
 from feena.simulation import run_simulations
-from feena.simulation_config import BrowserScenario
+from feena.simulation_config import BrowserAssertion, BrowserScenario
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "resilient-checkout"
 
@@ -122,3 +123,63 @@ def test_simulation_config_rejects_invalid_scenario():
             "steps": [{"action": "goto", "target": "https://example.com"}],
             "assertions": [{"kind": "json", "target": "/api/state", "expected": {"orders": 0}}],
         })
+
+
+@pytest.mark.parametrize("status_code", [200, 299, 302, 401, 403, 404, 500, 599])
+def test_json_assertions_accept_final_http_status_codes(status_code):
+    assertion = BrowserAssertion(
+        kind="json", target="/api/private", expected={"error": "forbidden"},
+        status_code=status_code,
+    )
+    assert assertion.status_code == status_code
+
+
+@pytest.mark.parametrize("status_code", [-1, 0, 100, 199, 600, 999])
+def test_json_assertions_reject_invalid_or_interim_status_codes(status_code):
+    with pytest.raises(ValueError):
+        BrowserAssertion(
+            kind="json", target="/api/private", expected={"error": "forbidden"},
+            status_code=status_code,
+        )
+
+
+@pytest.fixture
+def authorization_server():
+    app = Flask(__name__)
+
+    @app.get("/")
+    def index():
+        return "Authorization assertion fixture"
+
+    @app.get("/api/private/<int:status_code>")
+    def private_resource(status_code):
+        # Identical bodies ensure status alone determines whether denial passed.
+        return jsonify(error="forbidden"), status_code
+
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+
+
+def test_expected_denial_passes_but_unexpected_success_fails(authorization_server, tmp_path):
+    scenarios = [
+        BrowserScenario.model_validate({
+            "name": f"expected-denial-{actual_status}",
+            "goal": "Verify access to private data is denied.",
+            "steps": [{"action": "goto", "target": "/"}],
+            "assertions": [{
+                "kind": "json", "target": f"/api/private/{actual_status}",
+                "expected": {"error": "forbidden"}, "status_code": 403,
+            }],
+        })
+        for actual_status in (403, 200)
+    ]
+    denied, allowed = run_simulations(scenarios, authorization_server, tmp_path / "artifacts")
+    assert denied.status == "passed", denied.reason
+    assert allowed.status == "failed", allowed.reason
+    assert "assertion 1 (json)" in allowed.reason
