@@ -23,7 +23,7 @@ class Decision:
 
 
 class LLM:
-    def __init__(self, model: str = MODEL):
+    def __init__(self, model: str = MODEL, *, timeout: float = 30.0, max_retries: int = 0):
         self.model = model
         self._client = None
         key = os.environ.get("ANTHROPIC_API_KEY")
@@ -31,8 +31,8 @@ class LLM:
             try:
                 import anthropic
 
-                self._client = anthropic.Anthropic(api_key=key)
-            except Exception:
+                self._client = anthropic.Anthropic(api_key=key, timeout=timeout, max_retries=max_retries)
+            except Exception:  # noqa: BLE001 - unavailable providers disable exploration
                 self._client = None
 
     @property

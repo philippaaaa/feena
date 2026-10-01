@@ -54,3 +54,14 @@ scenarios:
     assertions:
       - {kind: text, target: "#status", expected: "Order confirmed."}
       - {kind: json, target: /api/state, expected: {orders: 1}}
+
+# Discovery infers browser actions; these expected outcomes remain operator-authored.
+discovery:
+  - name: discovered-checkout
+    goal: Place exactly one order and wait for its confirmation. Do not place another order.
+    start_path: /
+    max_steps: 12
+    timeout_seconds: 60
+    assertions:
+      - {kind: text, target: "#status", expected: "Order confirmed."}
+      - {kind: json, target: /api/state, expected: {orders: 1}}

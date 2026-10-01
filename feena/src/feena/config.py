@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from .discovery_config import DiscoveryGoal
 from .simulation_config import BrowserScenario
 
 
@@ -93,6 +94,14 @@ class Config(BaseModel):
     corpus: CorpusConfig = Field(default_factory=CorpusConfig)
     outcomes: list[OutcomeConfig] = Field(default_factory=list)
     scenarios: list[BrowserScenario] = Field(default_factory=list)
+    discovery: list[DiscoveryGoal] = Field(default_factory=list)
+
+    @field_validator("discovery")
+    @classmethod
+    def unique_discovery_goals(cls, value: list[DiscoveryGoal]) -> list[DiscoveryGoal]:
+        if len({goal.name for goal in value}) != len(value):
+            raise ValueError("discovery goal names must be unique")
+        return value
 
     @field_validator("scenarios")
     @classmethod

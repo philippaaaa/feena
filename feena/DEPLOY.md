@@ -65,8 +65,8 @@ Cursor's install-link format: https://cursor.com/docs/mcp/install-links
 The MCP service now exposes `start_campaign(scenarios)`, `get_campaign(campaign_id)`, and
 `cancel_campaign(campaign_id)`. Existing `start_run`, `get_run`, and `cancel_run` calls use
 the same durable queue. Every configured scenario/profile pair becomes one browser job.
-Campaigns execute configured journeys; autonomous discovery and hostile-agent scheduling
-are not included in this release.
+Campaigns execute configured journeys and reviewed discovery proposals. Hostile-agent
+scheduling is not included in this release.
 
 Provision independent disposable copies of your app and database, then repeat `--target`
 once per worker slot (up to 16). Different URLs must not be aliases for the same backend:
@@ -116,3 +116,52 @@ only queued jobs resume. Remove the flag from normal startup configuration: it i
 operator acknowledgement, not automatic recovery or a substitute for process cleanup.
 
 This is bounded parallel execution on one host, not multi-tenant or distributed hosting.
+
+## Discover a journey from a goal
+
+Discovery uses a model to choose browser actions, then proposes a reusable scenario. The
+operator supplies the goal and expected outcomes in `feena.yaml`; the model cannot author
+its own definition of success. Configure a `discovery` entry such as the one now included
+in `examples/resilient-checkout/feena.yaml`:
+
+```yaml
+discovery:
+  - name: discovered-checkout
+    goal: Place exactly one order and wait for its confirmation.
+    start_path: /
+    max_steps: 12
+    timeout_seconds: 60
+    assertions:
+      - {kind: text, target: "#status", expected: "Order confirmed."}
+      - {kind: json, target: /api/state, expected: {orders: 1}}
+```
+
+Set `ANTHROPIC_API_KEY` privately on the Feena service to enable discovery. It uses the
+existing model integration and may incur provider charges. Page observations and the goal
+are sent to that provider; use disposable test data. Missing credentials return an
+inconclusive discovery result, never a passing test. Ordinary simulation workers do not
+receive the provider key.
+
+From Cursor:
+
+1. Ask Feena to `list_discovery_goals`.
+2. Call `start_discovery` with `{"goal": "discovered-checkout"}`.
+3. Poll `get_discovery` using its `campaign_id`. Inspect the proposed steps and assertions.
+4. After reviewing the journey, call `approve_discovery` with that same ID. This persists the
+   scenario and queues an independent browser replay through the campaign runner.
+5. Poll `get_campaign` for the returned replay campaign. A proposal is not a verified
+   repeatable test until replay passes. After replay passes, the approved scenario appears in `list_scenarios`
+   and can be used in later campaigns. Failed or incomplete validation does not promote it.
+
+Discovery shares target slots, reset hooks, cancellation, persistence, and interrupted-run
+recovery with simulation campaigns. Use `cancel_campaign` to stop an exploration. Browser
+navigation and requests remain within the configured origin. Redirect responses and
+WebSocket connections are blocked in discovery and replay; use direct test routes in this
+release. Redirect-dependent sign-in flows are not supported yet. Discovery does not provision
+accounts, solve CAPTCHAs, manage external identity providers, or generate adversarial tests.
+It currently generates a normal-network journey; existing configured scenarios can supply
+network fault profiles. Review generated values because proposals can contain synthetic
+form inputs. Do not use real credentials or private production data in discovery goals.
+
+This feature must be deployed from a repository/branch containing the discovery changes.
+A Render service tracking another fork does not receive them automatically.
