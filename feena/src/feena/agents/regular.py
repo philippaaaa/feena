@@ -20,6 +20,8 @@ class RegularAgent(BaseAgent):
         "that never submits. Prefer finishing a whole flow over clicking around."
     )
     goal = "Complete the app's primary end-to-end flow as a new user."
+    # Clean, goal-directed paths are what make good shortcuts for later runs.
+    records_macros = True
 
     def evaluate(self, decision) -> None:
         page = self.ctx.session.page
