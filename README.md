@@ -1,4 +1,4 @@
-# Mallory — realistic browser QA
+# Feena — realistic browser QA
 
 Mallory tests browser journeys under real-world conditions: retries, interrupted connections,
 lost responses, offline recovery, and multiple tabs. It pairs visible outcomes with backend
