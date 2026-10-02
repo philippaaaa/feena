@@ -32,6 +32,11 @@ inputs:
   comment:
     description: "Post/update a single pull request comment ('true' or 'false')."
     default: "true"
+  base:
+    description: >
+      Git ref to diff against (e.g. origin/main) so agents focus on the routes
+      this PR affects. Needs history: use actions/checkout with fetch-depth 0. Empty = unfocused.
+    default: ""
   browser:
     description: "Install Chromium so XSS checks can read the rendered DOM of client-rendered apps."
     default: "true"
@@ -87,11 +92,13 @@ runs:
         FEENA_FAIL_ON: ${{ inputs.fail-on }}
         FEENA_WAIT: ${{ inputs.wait }}
         FEENA_COMMENT: ${{ inputs.comment }}
+        FEENA_BASE: ${{ inputs.base }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         args=(ci --url "$FEENA_URL" --config "$FEENA_CONFIG" --tests "$FEENA_TESTS" \
               --baseline "$FEENA_BASELINE" --fail-on "$FEENA_FAIL_ON" --wait "$FEENA_WAIT")
         if [ "$FEENA_COMMENT" != "true" ]; then args+=(--no-comment); fi
+        if [ -n "$FEENA_BASE" ]; then args+=(--base "$FEENA_BASE"); fi
         feena "${args[@]}"
 
     - name: Upload Feena report
@@ -103,5 +110,7 @@ runs:
           .feena/report.md
           .feena/comment.md
           .feena/verification.json
+          .feena/blast-radius.json
+          .feena/run-stats.json
           .feena/tests
         if-no-files-found: ignore

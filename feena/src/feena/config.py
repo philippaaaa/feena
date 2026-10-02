@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from .discovery_config import DiscoveryGoal
 from .simulation_config import BrowserScenario
 
 
@@ -35,6 +36,30 @@ class RunConfig(BaseModel):
     budget_seconds: int = 300
     max_steps: int = 40
     headed: bool = False
+
+
+class ModelsConfig(BaseModel):
+    """Which models the exploratory agents decide with (see feena.llm)."""
+    smart: str = "claude-sonnet-4-6"
+    # Optional cheap first-pass decider: another Claude model id, or the name of a plugin in
+    # the ``feena.deciders`` entry-point group (e.g. a Jev adapter). Low-confidence answers
+    # escalate to ``smart``.
+    fast: str | None = None
+    escalate_below: float = Field(default=0.6, ge=0, le=1)
+
+
+class MacrosConfig(BaseModel):
+    """Memoized navigation shortcuts (see feena.macros)."""
+    enabled: bool = False
+    # Commit this file (or cache it in CI) so shortcuts survive between runs.
+    path: str = "./.feena/macros.json"
+    min_successes: int = Field(default=3, ge=1)   # observations before `feena macros promote`
+
+
+class BlastRadiusConfig(BaseModel):
+    """Diff-aware focus. Set base (or pass --base) to enable."""
+    base: str | None = None
+    repo: str = "."
 
 
 class ReportConfig(BaseModel):
@@ -89,10 +114,21 @@ class Config(BaseModel):
     scope: ScopeConfig = Field(default_factory=ScopeConfig)
     run: RunConfig = Field(default_factory=RunConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
+    macros: MacrosConfig = Field(default_factory=MacrosConfig)
+    blast_radius: BlastRadiusConfig = Field(default_factory=BlastRadiusConfig)
     attest: AttestConfig = Field(default_factory=AttestConfig)
     corpus: CorpusConfig = Field(default_factory=CorpusConfig)
     outcomes: list[OutcomeConfig] = Field(default_factory=list)
     scenarios: list[BrowserScenario] = Field(default_factory=list)
+    discovery: list[DiscoveryGoal] = Field(default_factory=list)
+
+    @field_validator("discovery")
+    @classmethod
+    def unique_discovery_goals(cls, value: list[DiscoveryGoal]) -> list[DiscoveryGoal]:
+        if len({goal.name for goal in value}) != len(value):
+            raise ValueError("discovery goal names must be unique")
+        return value
 
     @field_validator("scenarios")
     @classmethod
@@ -114,6 +150,14 @@ class Config(BaseModel):
     @property
     def compose_path(self) -> Path:
         return (self.root / self.target.compose).resolve()
+
+    @property
+    def macros_path(self) -> Path:
+        return (self.root / self.macros.path).resolve()
+
+    @property
+    def repo_path(self) -> Path:
+        return (self.root / self.blast_radius.repo).resolve()
 
     @property
     def out_path(self) -> Path:
