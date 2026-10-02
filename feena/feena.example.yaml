@@ -32,6 +32,8 @@ scope:
     - "/admin/danger"      # e.g. a real "delete everything" button you don't want exercised
 
 run:
+  mode: swarm  # single runs only single_agent; swarm runs the agents list below
+  single_agent: regular
   agents: [regular, clumsy, hostile]
   # Wall-clock budget per agent, in seconds. Keeps a PR check from running forever.
   budget_seconds: 300
