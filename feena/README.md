@@ -1,5 +1,9 @@
 # Feena
 
+**Critical-flow suites:** turn your manual release checklist into named browser journey
+groups, run them with `feena simulate --suite release`, and retain per-run JSON summaries
+and evidence. See [CRITICAL_FLOWS.md](CRITICAL_FLOWS.md) for configuration and CI usage.
+
 **Connecting from Cursor?** Open your hosted Feena workspace and follow the three-step
 setup page: access key → check connection → Add to Cursor. No terminal or JSON editing is
 needed for end users. A temporary preview deliberately disables installation until a stable
