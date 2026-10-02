@@ -65,3 +65,20 @@ corpus:
   enabled: false
   stack: nextjs-postgres
   endpoint: null
+
+# Explore with a strong model; optionally try a cheaper model or decider plugin first.
+models:
+  smart: claude-sonnet-4-6
+  fast: null
+  escalate_below: 0.6
+
+# Record reusable navigation shortcuts only when enabled. Review before promotion.
+macros:
+  enabled: false
+  path: ./.feena/macros.json
+  min_successes: 3
+
+# Optional Git-diff focus; paths are relative to this configuration file.
+blast_radius:
+  base: null
+  repo: .

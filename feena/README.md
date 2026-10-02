@@ -382,3 +382,83 @@ the first supported stack (Next.js + Postgres).
 
 Apache-2.0 (intended). The runner is free and open source; hosted runs and support are the
 business.
+
+## Reusable navigation, model routing, and change-aware exploration
+
+Exploratory `regular` and `clumsy` agents can now choose from a numbered menu of actual
+page controls. Accessible roles and full names identify each control; duplicate names use
+an ordinal. This reduces invented selectors and supports double-click, fill, key presses,
+back navigation, and recorded shortcuts. The modern Playwright ARIA snapshot is supported.
+These features apply to the CLI's exploratory agents; the hosted discovery tools retain
+their existing goal/proposal/replay workflow.
+
+### Reuse reviewed navigation shortcuts
+
+Enable recording in `feena.yaml`:
+
+```yaml
+macros:
+  enabled: true
+  path: ./.feena/macros.json
+  min_successes: 3
+```
+
+The regular agent records routes it successfully reaches. The clumsy agent may reuse
+promoted shortcuts but does not teach shortcuts from its irregular actions. Recording is
+opt-in. Inspect the captured steps, then promote candidates observed repeatedly:
+
+```bash
+feena run --config feena.yaml --url http://localhost:3000 --agent regular
+feena macros list --config feena.yaml
+feena macros show <macro-id> --config feena.yaml
+feena macros promote --config feena.yaml
+feena macros export --config feena.yaml
+```
+
+Promoted shortcuts replay without model calls, validate their ending page structure, and
+become stale if controls or the destination change. Shortcuts through routes affected by the
+current Git diff are withheld so those pages receive fresh exploration. `feena macros reset
+<macro-id>` removes one shortcut; `feena macros reset --all` clears the cache.
+
+Credential fills use references such as `user1_password`, resolved from configured test
+accounts at execution time. Unknown literal fills and paths containing query parameters are
+not memoized. Keep browser traces private; they can still contain entered test data. Review
+shortcuts before promotion because replay repeats every captured action, including writes.
+Exported tests resolve credentials from `FEENA_USER1_EMAIL` / `FEENA_USER1_PASSWORD` and use
+`FEENA_BASE_URL` for the target.
+
+### Try a cheaper decider before escalating
+
+```yaml
+models:
+  smart: claude-sonnet-4-6
+  fast: null
+  escalate_below: 0.6
+```
+
+Set `fast` to a supported cheaper Claude model ID or an installed `feena.deciders` plugin
+name. Confident valid actions use the fast answer; low confidence, malformed answers,
+provider failures, unsupported targets, and finding reports escalate to the smart model.
+Leaving `fast` unset preserves the single-model behavior. This changes which model makes
+exploratory decisions; it does not guarantee a particular cost reduction.
+
+### Focus on routes affected by a change
+
+```bash
+feena blast-radius --repo . --base origin/main
+feena blast-radius --repo . --base origin/main --json
+feena run --config feena.yaml --url http://localhost:3000 --base origin/main
+feena ci --config feena.yaml --url http://localhost:3000 --base origin/main
+```
+
+The analyzer follows imports to routes in supported frontend layouts and Python route
+handlers, reports chains connecting changed files to pages, and includes deleted/renamed
+files. Global changes widen exploration and invalidate all shortcut offers. Unmapped files
+remain visible as uncertain coverage; route hints do not remove configured scenarios,
+outcomes, or regression tests from the run. Agents receive route hints, not source files.
+
+The GitHub Action accepts an optional `base` input. Fetch sufficient Git history first
+(`actions/checkout` with `fetch-depth: 0`). Reports include `blast-radius.json` and
+`run-stats.json` with model decisions, replayed shortcuts, saved steps, and stale shortcuts.
+
+Exploratory browser sessions currently block HTTP redirects to keep redirect chains within the target boundary. Login journeys that require server redirects are unsupported until guarded redirect handling is implemented.

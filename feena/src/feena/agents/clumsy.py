@@ -22,20 +22,15 @@ class ClumsyAgent(BaseAgent):
     )
     goal = "Stress the app's forms and flows the way a careless real user would."
 
-    def act(self, decision) -> None:
-        page = self.ctx.session.page
-        assert page is not None
-        # Add a little chaos on top of the model's chosen action: on a click, occasionally
-        # double-click to probe for double-submit handling.
+    # Uses shortcuts to get somewhere quickly, but never records: its variation is the point.
+    records_macros = False
+
+    def act(self, decision, candidates=None):
+        # Add a little chaos on top of the model's chosen action: when the model says it wants
+        # a double click, probe for double-submit handling even if it answered "click".
         if decision.action == "click" and decision.reason and "double" in decision.reason.lower():
-            try:
-                page.dblclick(decision.target, timeout=3000)
-                self.ctx.history.append(f"double-clicked {decision.target}")
-                return
-            except Exception as e:  # noqa: BLE001
-                self.ctx.history.append(f"double-click failed: {e}")
-                return
-        super().act(decision)
+            decision.action = "dblclick"
+        return super().act(decision, candidates)
 
     def evaluate(self, decision) -> None:
         page = self.ctx.session.page
@@ -54,8 +49,9 @@ class ClumsyAgent(BaseAgent):
                         "to the user. Indicates a missing validation or state-handling gap."
                     ),
                     agent=self.name,
-                    steps=[Step(action=decision.action, target=decision.target,
-                                value=decision.value, note=decision.reason)],
+                    steps=[Step(action=decision.action, target=self.target_for_step(decision),
+                                value=decision.value_kind or decision.value,
+                                note=decision.reason)],
                     evidence={"screenshot": str(shot), "url": page.url},
                 )
             )
