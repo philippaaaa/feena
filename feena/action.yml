@@ -37,6 +37,12 @@ inputs:
       Git ref to diff against (e.g. origin/main) so agents focus on the routes
       this PR affects. Needs history: use actions/checkout with fetch-depth 0. Empty = unfocused.
     default: ""
+  mode:
+    description: "single or swarm; empty uses run.mode from config."
+    default: ""
+  agent:
+    description: "Single agent: regular, clumsy, or hostile. Implies single mode."
+    default: ""
   browser:
     description: "Install Chromium so XSS checks can read the rendered DOM of client-rendered apps."
     default: "true"
@@ -93,12 +99,16 @@ runs:
         FEENA_WAIT: ${{ inputs.wait }}
         FEENA_COMMENT: ${{ inputs.comment }}
         FEENA_BASE: ${{ inputs.base }}
+        FEENA_MODE: ${{ inputs.mode }}
+        FEENA_AGENT: ${{ inputs.agent }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
         args=(ci --url "$FEENA_URL" --config "$FEENA_CONFIG" --tests "$FEENA_TESTS" \
               --baseline "$FEENA_BASELINE" --fail-on "$FEENA_FAIL_ON" --wait "$FEENA_WAIT")
         if [ "$FEENA_COMMENT" != "true" ]; then args+=(--no-comment); fi
         if [ -n "$FEENA_BASE" ]; then args+=(--base "$FEENA_BASE"); fi
+        if [ -n "$FEENA_MODE" ]; then args+=(--mode "$FEENA_MODE"); fi
+        if [ -n "$FEENA_AGENT" ]; then args+=(--agent "$FEENA_AGENT"); fi
         feena "${args[@]}"
 
     - name: Upload Feena report

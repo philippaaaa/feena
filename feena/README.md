@@ -462,3 +462,37 @@ The GitHub Action accepts an optional `base` input. Fetch sufficient Git history
 `run-stats.json` with model decisions, replayed shortcuts, saved steps, and stale shortcuts.
 
 Exploratory browser sessions currently block HTTP redirects to keep redirect chains within the target boundary. Login journeys that require server redirects are unsupported until guarded redirect handling is implemented.
+
+### Choose a single agent or the swarm
+
+Use one focused agent for a smaller run, or the configured group for broader coverage:
+
+```bash
+feena run --url http://localhost:3000 --mode single
+feena run --url http://localhost:3000 --mode single --agent clumsy
+feena run --url http://localhost:3000 --mode swarm
+feena ci --url http://localhost:3000 --mode single --agent hostile
+```
+
+Single mode defaults to `regular`; choose `clumsy` for messy user behavior or `hostile`
+for deterministic security checks. Regular and clumsy require model credentials; single
+mode fails clearly if they are missing. `--agent` alone remains shorthand for single mode.
+Combining `--mode swarm` with `--agent` is rejected to avoid ambiguous coverage.
+
+Persist the choice in `feena.yaml`:
+
+```yaml
+run:
+  mode: single
+  single_agent: regular
+  agents: [regular, clumsy, hostile]  # used when mode is swarm
+```
+
+CLI flags override the saved choice. Existing configs default to swarm. Swarm currently
+runs the configured personas sequentially; it does not imply parallel browsers. The choice
+controls exploratory/security agents: configured outcomes, browser scenarios, and CI
+regression tests still run in either mode. The GitHub Action accepts `mode` and `agent`
+inputs with the same behavior. Reports record the selected mode.
+
+This choice applies to `run` and `ci`. Hosted MCP `start_run`, `start_campaign`, and discovery
+remain journey-based tools; they do not launch this CLI agent group.

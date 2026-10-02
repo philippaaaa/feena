@@ -108,10 +108,25 @@ def _target(cfg: Config, url: str | None, wait: int):
             yield sb
 
 
+def _select_agents(cfg: Config, mode: str | None, only_agent: str | None) -> list[str]:
+    if mode == "swarm" and only_agent:
+        raise click.UsageError("--agent selects one agent; use --mode single or omit --agent.")
+    selected_mode = mode or ("single" if only_agent else cfg.run.mode)
+    agents = ([only_agent or cfg.run.single_agent] if selected_mode == "single"
+              else list(cfg.run.agents))
+    unknown = set(agents) - {*EXPLORATORY, "hostile"}
+    if unknown:
+        raise click.UsageError(f"Unknown agent(s): {', '.join(sorted(unknown))}.")
+    cfg.run.mode = selected_mode
+    return list(dict.fromkeys(agents))
+
+
 def _scan(cfg: Config, sandbox: Sandbox, agents: list[str], blast=None):
     """Run agents, dedup, and keep only findings that reproduce. -> (confirmed, dropped_count)."""
     llm = make_decider(cfg.models)
     if not llm.available and any(a in EXPLORATORY for a in agents):
+        if cfg.run.mode == "single":
+            raise click.ClickException("Single exploratory agent requires configured model credentials.")
         console.print("[yellow]No configured model credentials: exploratory agents will no-op. "
                       "Hostile checks still run.[/yellow]")
     findings = dedup(_run_agents(cfg, sandbox, agents, llm, blast))
@@ -151,7 +166,7 @@ def _blast(cfg: Config, base: str | None):
 def _extra_sections(cfg: Config, blast) -> str:
     import json
 
-    parts = []
+    parts = [f"Execution mode: **{cfg.run.mode}**."]
     if blast is not None:
         parts.append(blast.render_markdown())
     stats_file = cfg.out_path / "run-stats.json"
@@ -168,21 +183,24 @@ def _extra_sections(cfg: Config, blast) -> str:
 
 @main.command()
 @click.option("--config", "config_path", default="feena.yaml", help="Path to feena.yaml.")
-@click.option("--agent", "only_agent", default=None, help="Run just one agent.")
+@click.option("--mode", type=click.Choice(["single", "swarm"]), default=None,
+              help="One agent or the configured group (default: run.mode from config).")
+@click.option("--agent", "only_agent", type=click.Choice(["regular", "clumsy", "hostile"]),
+              default=None, help="Select one agent; implies single mode.")
 @click.option("--headed", is_flag=True, help="Show the browser (exploratory agents).")
 @click.option("--url", default=None, help="Attach to an app already running locally instead of building a sandbox.")
 @click.option("--wait", default=60, show_default=True, help="Seconds to wait for --url to become healthy.")
 @click.option("--base", default=None, help="Git ref to diff against; focuses agents on the "
                                            "routes the change affects (blast radius).")
 def run(config_path: str, only_agent: str | None, headed: bool, url: str | None, wait: int,
-        base: str | None) -> None:
+        base: str | None, mode: str | None) -> None:
     """Boot the app in a sandbox, run the agents, verify, and report."""
     cfg = _load_or_default(config_path) if url else load_config(config_path)
     if headed:
         cfg.run.headed = True
-    agents = [only_agent] if only_agent else cfg.run.agents
+    agents = _select_agents(cfg, mode, only_agent)
 
-    console.print(f"[bold]Feena[/bold] · agents: {', '.join(agents)}")
+    console.print(f"[bold]Feena[/bold] · {cfg.run.mode} · agents: {', '.join(agents)}")
     blast = _blast(cfg, base)
     try:
         with _target(cfg, url, wait) as sandbox:
@@ -339,18 +357,22 @@ def regress(base_url: str, config_path: str, tests_dir: str | None) -> None:
               help="Fail on NEW findings at or above this severity ('none' = never on findings).")
 @click.option("--wait", default=60, show_default=True, help="Seconds to wait for the app to be healthy.")
 @click.option("--comment/--no-comment", default=True, help="Post/update the sticky PR comment.")
-@click.option("--agent", "only_agent", default=None, help="Run just one agent.")
+@click.option("--mode", type=click.Choice(["single", "swarm"]), default=None,
+              help="One agent or the configured group (default: run.mode from config).")
+@click.option("--agent", "only_agent", type=click.Choice(["regular", "clumsy", "hostile"]),
+              default=None, help="Select one agent; implies single mode.")
 @click.option("--base", default=None, help="Git ref to diff against (e.g. origin/main) to focus "
                                            "agents on the routes this PR affects.")
 def ci(url, config_path, tests_dir, baseline_path, fail_on, wait, comment, only_agent,
-       base) -> None:
+       base, mode) -> None:
     """The PR check: scan, run committed regression tests, comment once, fail on NEW problems."""
     from . import ci as ci_mod
 
     cfg = _load_or_default(config_path)
-    agents = [only_agent] if only_agent else [
-        a for a in cfg.run.agents if a == "hostile" or make_decider(cfg.models).available]
-    console.print(f"[bold]Feena CI[/bold] · agents: {', '.join(agents)}")
+    agents = _select_agents(cfg, mode, only_agent)
+    if cfg.run.mode == "swarm" and not make_decider(cfg.models).available:
+        agents = [a for a in agents if a == "hostile"]
+    console.print(f"[bold]Feena CI[/bold] · {cfg.run.mode} · agents: {', '.join(agents)}")
     blast = _blast(cfg, base)
     try:
         with _target(cfg, url, wait) as sandbox:

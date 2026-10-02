@@ -32,6 +32,8 @@ class ScopeConfig(BaseModel):
 
 
 class RunConfig(BaseModel):
+    mode: Literal["single", "swarm"] = "swarm"
+    single_agent: Literal["regular", "clumsy", "hostile"] = "regular"
     agents: list[str] = Field(default_factory=lambda: ["regular", "clumsy", "hostile"])
     budget_seconds: int = 300
     max_steps: int = 40
