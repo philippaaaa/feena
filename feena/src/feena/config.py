@@ -6,7 +6,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .simulation_config import BrowserScenario
 
@@ -83,6 +83,22 @@ class OutcomeConfig(BaseModel):
         return OutcomeStep.local_path(value)
 
 
+class JourneySuite(BaseModel):
+    """A reviewable release checklist referencing existing browser scenarios."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    description: str = ""
+    scenarios: list[str] = Field(min_length=1)
+
+    @field_validator("scenarios")
+    @classmethod
+    def unique_members(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("suite scenario references must be unique")
+        return value
+
+
 class Config(BaseModel):
     target: TargetConfig
     users: list[UserConfig] = Field(default_factory=list)
@@ -93,6 +109,18 @@ class Config(BaseModel):
     corpus: CorpusConfig = Field(default_factory=CorpusConfig)
     outcomes: list[OutcomeConfig] = Field(default_factory=list)
     scenarios: list[BrowserScenario] = Field(default_factory=list)
+    suites: list[JourneySuite] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_suites(self):
+        names = {s.name for s in self.scenarios}
+        if len({s.name for s in self.suites}) != len(self.suites):
+            raise ValueError("suite names must be unique")
+        for suite in self.suites:
+            missing = set(suite.scenarios) - names
+            if missing:
+                raise ValueError(f"suite {suite.name} references unknown scenarios: {sorted(missing)}")
+        return self
 
     @field_validator("scenarios")
     @classmethod

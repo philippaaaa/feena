@@ -5,6 +5,13 @@ target:
   healthcheck: /api/health
 run:
   agents: []
+suites:
+  - name: release
+    description: Retry safety and offline recovery
+    scenarios: [retry-checkout, offline-recovery]
+  - name: detect-broken-checkout
+    description: Deliberately failing fixture to verify the release gate
+    scenarios: [broken-idempotency]
 scenarios:
   - name: retry-checkout
     goal: Complete one order even when a request is delayed, aborted, or committed but its response is lost.

@@ -37,26 +37,56 @@ def main() -> None:
 @click.option("--config", "config_path", default="feena.yaml")
 @click.option("--url", required=True, help="Your disposable local/private preview app.")
 @click.option("--scenario", default=None, help="Run one configured browser journey.")
+@click.option("--suite", default=None, help="Run a named critical-flow checklist.")
 @click.option("--wait", default=60, type=click.IntRange(min=1))
-def simulate(config_path, url, scenario, wait):
+def simulate(config_path, url, scenario, suite, wait):
     """Run browser journeys across real network conditions; no model or security scan required."""
-    from .simulation import render_simulations, run_simulations
+    import uuid
 
-    cfg = load_config(config_path)
-    selected = [s for s in cfg.scenarios if scenario is None or s.name == scenario]
-    if not selected:
-        raise click.ClickException("No matching scenarios configured; add scenarios to feena.yaml.")
+    from .simulation import render_simulations, run_simulations
+    from .suites import select_scenarios, summarize_run, write_summary
+
+    try:
+        cfg = load_config(config_path)
+        selected = select_scenarios(cfg, suite, scenario)
+    except (ValueError, FileNotFoundError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    run_dir = cfg.out_path / "suite-runs" / uuid.uuid4().hex
     try:
         with _target(cfg, url, wait) as sandbox:
-            results = run_simulations(selected, sandbox.base_url, cfg.out_path / "simulations")
+            results = run_simulations(selected, sandbox.base_url, run_dir / "evidence")
     except SandboxError as exc:
         raise click.ClickException(str(exc)) from exc
     body = render_simulations(results)
+    summary = summarize_run(selected, results, suite)
+    write_summary(summary, run_dir)
+    counts = summary["counts"]
+    body = (f"Release check: {summary['status'].upper()} — "
+            f"{counts.get('passed', 0)} passed, {counts.get('failed', 0)} failed, "
+            f"{counts.get('inconclusive', 0)} inconclusive\n\n" + body)
+    (run_dir / "report.md").write_text(body, encoding="utf-8")
     console.print(body, markup=False)
     cfg.out_path.mkdir(parents=True, exist_ok=True)
     (cfg.out_path / "simulation-report.md").write_text(body)
-    if any(r.status != "passed" for r in results):
+    console.print(f"Run summary: {run_dir / 'summary.json'}", markup=False)
+    if summary["status"] != "passed":
         sys.exit(1)
+
+
+@main.command("suites")
+@click.option("--config", "config_path", default="feena.yaml")
+def list_suites(config_path):
+    """List shared critical-flow checklists without starting a browser."""
+    try:
+        cfg = load_config(config_path)
+    except (ValueError, FileNotFoundError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not cfg.suites:
+        console.print("No suites configured. Add suites to feena.yaml.")
+    for suite in cfg.suites:
+        console.print(f"{suite.name}: {suite.description}", markup=False)
+        for name in suite.scenarios:
+            console.print(f"  - {name}", markup=False)
 
 
 @main.command("replay-simulation")
@@ -221,7 +251,7 @@ def _emit(cfg, confirmed: list[Finding], dropped_count: int, agents: list[str], 
 @click.option("--out", "out_dir", default="./.feena", help="Where to write the report.")
 def bench(targets_path: str, only: str | None, out_dir: str) -> None:
     """Run the hostile agent across many sandboxed apps and aggregate the results."""
-    from .bench import load_targets, run_bench, render_bench_md, write_bench
+    from .bench import load_targets, render_bench_md, run_bench, write_bench
     targets = load_targets(targets_path)
     console.print(f"[bold]Feena benchmark[/bold] · {len(targets)} target(s)"
                   + (f" · only {only}" if only else ""))
@@ -398,6 +428,7 @@ def keygen(out: str) -> None:
 def verify(attestation: str, pub: str) -> None:
     """Verify a signed attestation has not been altered."""
     import json
+
     from .attest import verify as _verify
     att = json.loads(Path(attestation).read_text())
     if _verify(att, Path(pub)):
@@ -432,6 +463,7 @@ def corpus_stats(config_path: str) -> None:
 def corpus_upload(config_path: str) -> None:
     """Explicitly send anonymised records to the configured endpoint."""
     import os
+
     from .corpus import upload
     cfg = load_config(config_path)
     if not cfg.corpus.endpoint:

@@ -1,5 +1,14 @@
 # Feena
 
+**Critical-flow suites:** turn your manual release checklist into named browser journey
+groups, run them with `feena simulate --suite release`, and retain per-run JSON summaries
+and evidence. See [CRITICAL_FLOWS.md](CRITICAL_FLOWS.md) for configuration and CI usage.
+
+**Platform preview:** inspect saved results and private evidence with `feena-dashboard`,
+connect Stripe test billing, and execute experimental native Android/iOS journeys through
+local Appium with `feena-mobile`. See [PLATFORM_PREVIEW.md](PLATFORM_PREVIEW.md) for setup
+and current limitations.
+
 **Connecting from Cursor?** Open your hosted Feena workspace and follow the three-step
 setup page: access key → check connection → Add to Cursor. No terminal or JSON editing is
 needed for end users. A temporary preview deliberately disables installation until a stable
