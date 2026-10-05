@@ -70,6 +70,16 @@ def _run_profile(scenario, profile, base_url: str, directory: Path) -> Simulatio
         context.tracing.start(screenshots=True, snapshots=True, sources=True)
         trace_started = True
 
+        def continue_local(route):
+            # Browser routing does not intercept every redirect hop. Do not let a
+            # redirect bypass the origin check or silently reach another service.
+            response = route.fetch(max_redirects=0, timeout=scenario.timeout_ms)
+            if 300 <= response.status < 400:
+                route.abort()
+                fault_errors.append("RedirectBlocked")
+                return
+            route.fulfill(response=response)
+
         def _route_request(route):
             nonlocal matches_seen, faults_applied
             request = route.request
@@ -77,14 +87,14 @@ def _run_profile(scenario, profile, base_url: str, directory: Path) -> Simulatio
                 route.abort()
                 return
             if getattr(profile, "effect", "normal") == "normal" or faults_applied:
-                route.continue_()
+                continue_local(route)
                 return
             if not _matches(request.url, request.method, profile, base_origin):
-                route.continue_()
+                continue_local(route)
                 return
             matches_seen += 1
             if matches_seen != getattr(profile, "occurrence", 1):
-                route.continue_()
+                continue_local(route)
                 return
             fault_started = time.monotonic()
             fault = {"event": "fault", "effect": profile.effect,
@@ -94,14 +104,14 @@ def _run_profile(scenario, profile, base_url: str, directory: Path) -> Simulatio
             try:
                 if profile.effect == "delay":
                     time.sleep(profile.delay_ms / 1000)
-                    route.continue_()
+                    continue_local(route)
                 elif profile.effect == "abort":
                     route.abort()
                 elif profile.effect == "drop_response":
                     route.fetch(max_redirects=0)
                     route.abort()
                 else:
-                    route.continue_()
+                    continue_local(route)
                 faults_applied += 1
                 fault["event"] = "fault_applied"
                 fault["status"] = "completed"
@@ -130,6 +140,7 @@ def _run_profile(scenario, profile, base_url: str, directory: Path) -> Simulatio
                     pass
 
         context.route("**/*", route_request)
+        context.route_web_socket("**/*", lambda ws: ws.close())
         pages["main"] = context.new_page()
         pages["main"].set_default_timeout(scenario.timeout_ms)
         active_tab = "main"
